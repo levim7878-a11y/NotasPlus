@@ -628,12 +628,12 @@ html[data-theme="dark"] .icon-btn.selected { color: var(--accent); }
 }
 
 @media print {
-  body { overflow: visible; background: #fff; }
-  .sidebar, .topbar, .notes-column, .editor-top-actions, .editor-meta-row, .format-toolbar, .editor-footer { display: none !important; }
+  body { overflow: visible !important; background: #fff !important; color: #000 !important; }
+  .sidebar, .topbar, .notes-column, .editor-top-actions, .editor-meta-row, .format-toolbar, .editor-footer, .sidebar-scrim, .modal-backdrop, .settings-backdrop, .toast, .mobile-compose-btn { display: none !important; }
   .workspace, .editor-column, .editor { display: block !important; position: static !important; height: auto !important; min-height: auto !important; overflow: visible !important; }
-  .editor { padding: 0; }
-  .title-input { font-size: 30px; color: #000; }
-  .body-editor { min-height: auto; color: #000; overflow: visible; }
+  .editor { padding: 0 !important; }
+  .title-input { font-size: 28px !important; color: #000 !important; border: 0 !important; padding: 0 0 12px !important; }
+  .body-editor { min-height: auto !important; color: #000 !important; overflow: visible !important; padding: 0 !important; }
 }
   
 /* ===== v6 · Backup e Nuvem ===== */
@@ -1068,7 +1068,7 @@ service cloud.firestore {
   function sanitizeHtml(html='') {
     const template = document.createElement('template');
     template.innerHTML = String(html || '');
-    const allowed = new Set(['DIV','P','BR','B','STRONG','I','EM','U','S','UL','OL','LI','SPAN','BLOCKQUOTE','H1','H2','H3','INPUT','IMG','AUDIO']);
+    const allowed = new Set(['DIV','P','BR','B','STRONG','I','EM','U','S','UL','OL','LI','SPAN','BLOCKQUOTE','H1','H2','H3','INPUT','IMG','AUDIO','A']);
     const forbidden = new Set(['SCRIPT','STYLE','IFRAME','OBJECT','EMBED','SVG','MATH','FORM','BUTTON','TEXTAREA','SELECT','OPTION','VIDEO','SOURCE']);
 
     const walk = node => {
@@ -1089,6 +1089,7 @@ service cloud.firestore {
         const wasChecked = tag === 'INPUT' && (child.checked || child.hasAttribute('checked'));
         const originalSrc = (tag === 'IMG' || tag === 'AUDIO') ? (child.getAttribute('src') || '') : '';
         const originalAlt = tag === 'IMG' ? (child.getAttribute('alt') || 'Imagem da nota') : '';
+        const originalHref = tag === 'A' ? (child.getAttribute('href') || '') : '';
         [...child.attributes].forEach(attr => child.removeAttribute(attr.name));
         if (wasCheckRow) child.className = 'check-row';
         if (tag === 'INPUT') {
@@ -1097,15 +1098,33 @@ service cloud.firestore {
           if (wasChecked) child.setAttribute('checked', '');
         }
         if (tag === 'IMG') {
-          if (/^data:image\//i.test(originalSrc)) child.setAttribute('src', originalSrc);
+          const isValidSrc = /^data:image\//i.test(originalSrc) || /^https?:\/\//i.test(originalSrc) || /^blob:/i.test(originalSrc);
+          if (!isValidSrc) { child.remove(); return; }
+          child.setAttribute('src', originalSrc);
           child.setAttribute('alt', originalAlt.slice(0, 120));
           child.setAttribute('loading', 'lazy');
         }
         if (tag === 'AUDIO') {
-          if (/^data:audio\//i.test(originalSrc)) child.setAttribute('src', originalSrc);
+          const isValidSrc = /^data:audio\//i.test(originalSrc) || /^https?:\/\//i.test(originalSrc) || /^blob:/i.test(originalSrc);
+          if (!isValidSrc) { child.remove(); return; }
+          child.setAttribute('src', originalSrc);
           child.setAttribute('controls', '');
           child.setAttribute('preload', 'metadata');
           child.setAttribute('contenteditable', 'false');
+        }
+        if (tag === 'A') {
+          const isValidHref = /^(?:https?:\/\/|mailto:|tel:)/i.test(originalHref);
+          if (isValidHref) {
+            child.setAttribute('href', originalHref);
+            child.setAttribute('target', '_blank');
+            child.setAttribute('rel', 'noopener noreferrer');
+          } else {
+            const frag = document.createDocumentFragment();
+            while (child.firstChild) frag.appendChild(child.firstChild);
+            child.replaceWith(frag);
+            walk(node);
+            return;
+          }
         }
         walk(child);
       });
@@ -1120,7 +1139,7 @@ service cloud.firestore {
     const reminder = safeTime(raw.reminder) ? new Date(raw.reminder).toISOString() : null;
     return {
       id: String(raw.id || uid()), title: String(raw.title || '').slice(0, 500), body: sanitizeHtml(raw.body || ''),
-      folder: cleanFolderName(raw.folder || ''), tags: Array.isArray(raw.tags) ? raw.tags.map(String).map(t=>t.trim().slice(0,40)).filter(Boolean).slice(0,20) : [],
+      folder: cleanFolderName(raw.folder || ''), tags: Array.isArray(raw.tags) ? raw.tags.map(String).map(t=>t.trim().replace(/^#+/, '').slice(0,40)).filter(Boolean).slice(0,20) : [],
       favorite: !!raw.favorite, pinned: !!raw.pinned, archived: !!raw.archived,
       deletedAt: safeTime(raw.deletedAt) ? new Date(raw.deletedAt).toISOString() : null,
       locked: !!raw.locked, pinHash: raw.pinHash ? String(raw.pinHash) : null,
@@ -1361,8 +1380,11 @@ service cloud.firestore {
     document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.filter === filter));
   }
 
+  const normalizeSearchText = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+
   function filteredNotes() {
-    const q = els.searchInput.value.trim().toLocaleLowerCase('pt-BR');
+    const rawQ = els.searchInput.value.trim();
+    const qNorm = normalizeSearchText(rawQ);
     let list = [...notes];
     if (currentFilter === 'trash') list = list.filter(n => !!n.deletedAt);
     else {
@@ -1376,11 +1398,26 @@ service cloud.firestore {
         if (currentFilter === 'folder') list = list.filter(n => n.folder === currentFolder);
       }
     }
-    if (q) list = list.filter(n => `${n.title} ${stripHtml(n.body)} ${(n.tags||[]).join(' ')} ${n.folder||''}`.toLocaleLowerCase('pt-BR').includes(q));
+    if (qNorm) {
+      list = list.filter(n => {
+        const titleNorm = normalizeSearchText(n.title);
+        const bodyNorm = normalizeSearchText(n.locked && !SESSION_UNLOCKS.has(n.id) ? '' : stripHtml(n.body));
+        const tagsNorm = normalizeSearchText((n.tags || []).map(t => `#${t} ${t}`).join(' '));
+        const folderNorm = normalizeSearchText(n.folder || '');
+        const haystack = `${titleNorm} ${bodyNorm} ${tagsNorm} ${folderNorm}`;
+        return haystack.includes(qNorm);
+      });
+    }
     const mode = els.sortSelect.value;
-    list.sort((a,b) => mode === 'titleAsc'
-      ? (a.title||'').localeCompare(b.title||'', 'pt-BR', {sensitivity:'base'})
-      : mode === 'updatedAsc' ? safeTime(a.updatedAt)-safeTime(b.updatedAt) : safeTime(b.updatedAt)-safeTime(a.updatedAt));
+    list.sort((a,b) => {
+      if (currentFilter !== 'trash' && currentFilter !== 'pinned') {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+      }
+      if (mode === 'titleAsc') return (a.title||'').localeCompare(b.title||'', 'pt-BR', {sensitivity:'base'});
+      if (mode === 'updatedAsc') return safeTime(a.updatedAt)-safeTime(b.updatedAt);
+      return safeTime(b.updatedAt)-safeTime(a.updatedAt);
+    });
     return list;
   }
 
@@ -1584,7 +1621,7 @@ service cloud.firestore {
       for (const n of affected) { n.folder=''; n.updatedAt=nowISO(); await dbPut(n); }
       if (currentFolder===folder){currentFolder=null; currentFilter='all'; setActiveNav('all');}
     } else if (clean !== folder) {
-      if (state.folders.some(f => f !== folder && f.toLocaleLowerCase('pt-BR') === clean.toLocaleLowerCase('pt-BR'))) return toast('Já existe uma pasta com esse nome');
+      if (state.folders.some(f => f.toLocaleLowerCase('pt-BR') !== folder.toLocaleLowerCase('pt-BR') && f.toLocaleLowerCase('pt-BR') === clean.toLocaleLowerCase('pt-BR'))) return toast('Já existe uma pasta com esse nome');
       state.folders = state.folders.map(f => f===folder ? clean : f);
       const affected = notes.filter(n=>n.folder===folder);
       for (const n of affected) { n.folder=clean; n.updatedAt=nowISO(); await dbPut(n); }
@@ -1668,7 +1705,7 @@ service cloud.firestore {
       if (scale >= .98 && file.size < 2.5*1024*1024) return original;
       const canvas=document.createElement('canvas'); canvas.width=Math.max(1,Math.round(img.naturalWidth*scale)); canvas.height=Math.max(1,Math.round(img.naturalHeight*scale));
       canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);
-      const outputType = file.type === 'image/png' ? 'image/webp' : 'image/jpeg';
+      const outputType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
       return canvas.toDataURL(outputType, .86);
     } catch { return original; }
   }
@@ -1700,14 +1737,23 @@ service cloud.firestore {
       saveEditorSelection();
       const stream = await navigator.mediaDevices.getUserMedia({audio:true});
       audioChunks=[]; recordingNoteId=currentNoteId;
-      mediaRecorder = new MediaRecorder(stream);
-      mediaRecorder.ondataavailable = e => { if (e.data.size) audioChunks.push(e.data); };
-      mediaRecorder.onerror = () => toast('A gravação de áudio foi interrompida');
+      let mimeType = '';
+      if (typeof MediaRecorder.isTypeSupported === 'function') {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mimeType = 'audio/webm;codecs=opus';
+        else if (MediaRecorder.isTypeSupported('audio/webm')) mimeType = 'audio/webm';
+        else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
+        else if (MediaRecorder.isTypeSupported('audio/aac')) mimeType = 'audio/aac';
+      }
+      const options = mimeType ? {mimeType} : {};
+      mediaRecorder = new MediaRecorder(stream, options);
+      const recordedType = mediaRecorder.mimeType || mimeType || 'audio/webm';
+      mediaRecorder.ondataavailable = e => { if (e.data?.size) audioChunks.push(e.data); };
+      mediaRecorder.onerror = () => { toast('A gravação de áudio foi interrompida'); updateAudioButton(false); };
       mediaRecorder.onstop = () => {
         clearTimeout(audioStopTimer); audioStopTimer=null;
-        stream.getTracks().forEach(t=>t.stop());
+        try { stream.getTracks().forEach(t=>t.stop()); } catch {}
         updateAudioButton(false);
-        const blob = new Blob(audioChunks, {type: mediaRecorder.mimeType || 'audio/webm'});
+        const blob = new Blob(audioChunks, {type: recordedType});
         const targetId = recordingNoteId; recordingNoteId=null; mediaRecorder=null;
         if (!blob.size) return;
         if (blob.size > MAX_AUDIO_BYTES) return toast('Áudio muito grande. Grave um trecho menor.');
@@ -1719,7 +1765,7 @@ service cloud.firestore {
       };
       mediaRecorder.start(1000); updateAudioButton(true); toast('Gravando áudio…');
       audioStopTimer=setTimeout(()=>{ if (isRecording()) { mediaRecorder.stop(); toast('Gravação finalizada em 3 minutos'); } }, AUDIO_MAX_MS);
-    } catch { toast('Permissão do microfone não concedida'); }
+    } catch { toast('Permissão do microfone não concedida'); updateAudioButton(false); }
   }
 
   async function checkReminder(note) {
@@ -2209,7 +2255,8 @@ service cloud.firestore {
 
   function closeSyncModal() {
     if (els.syncModal.hidden) return;
-    els.syncModal.hidden=true; els.syncModal.setAttribute('aria-hidden','true'); document.body.classList.remove('modal-open');
+    els.syncModal.hidden=true; els.syncModal.setAttribute('aria-hidden','true');
+    if (els.moreModal?.hidden) document.body.classList.remove('modal-open');
     try { localStorage.setItem(BACKUP_ONBOARDING_KEY,'1'); } catch {}
     const target = syncModalPreviousFocus?.isConnected ? syncModalPreviousFocus : els.syncCenterBtn; syncModalPreviousFocus=null;
     target?.focus?.({preventScroll:true});
@@ -2230,12 +2277,37 @@ service cloud.firestore {
   function exportTxt() { const n=currentNote(); if(!n)return; download(`${safeFilename(n.title)}.txt`, `${n.title || 'Sem título'}\n\n${stripHtml(n.body)}`, 'text/plain;charset=utf-8'); }
   function exportHtml() {
     const n=currentNote(); if(!n)return;
-    const html=`<!doctype html><html lang="pt-BR"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(n.title)}</title><body><h1>${escapeHtml(n.title)}</h1>${sanitizeHtml(n.body)}</body></html>`;
+    const title = escapeHtml(n.title || 'Sem título');
+    const folder = n.folder ? `<p style="color:#8e8e93;margin:0 0 16px;font-size:14px;">📁 ${escapeHtml(n.folder)}</p>` : '';
+    const date = formatDate(n.updatedAt);
+    const dateStr = date ? `<p style="color:#8e8e93;margin:0 0 20px;font-size:13px;">Atualizado em ${escapeHtml(date)}</p>` : '';
+    const html=`<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${title}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #1c1c1e; }
+    h1 { font-size: 32px; margin-bottom: 8px; }
+    img { max-width: 100%; border-radius: 12px; }
+    audio { width: 100%; max-width: 480px; margin: 12px 0; }
+    .check-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+    blockquote { border-left: 3px solid #ccc; margin: 12px 0; padding-left: 14px; color: #666; }
+  </style>
+</head>
+<body>
+  <h1>${title}</h1>
+  ${folder}
+  ${dateStr}
+  ${sanitizeHtml(n.body)}
+</body>
+</html>`;
     download(`${safeFilename(n.title)}.html`, html, 'text/html;charset=utf-8');
   }
   async function duplicateCurrent() {
     const n=currentNote(); if(!n)return; await flushSave();
-    const copy=normalizeNote({...n,id:uid(),title:`${n.title || 'Sem título'} — cópia`,pinned:false,createdAt:nowISO(),updatedAt:nowISO(),reminderNotifiedAt:null});
+    const copy=normalizeNote({...n,id:uid(),title:`${n.title || 'Sem título'} — cópia`,pinned:false,deletedAt:null,createdAt:nowISO(),updatedAt:nowISO(),reminderNotifiedAt:null});
     if (copy.locked && SESSION_UNLOCKS.has(n.id)) SESSION_UNLOCKS.add(copy.id);
     await dbPut(copy); notes.unshift(copy); closeMore(); await refreshNotes(); await selectNote(copy.id); toast('Nota duplicada');
   }
@@ -2260,7 +2332,8 @@ service cloud.firestore {
         state.folders=[...new Map(merged.map(x=>[x.toLocaleLowerCase('pt-BR'),x])).values()].slice(0,100);
       }
       if (data.settings?.theme === 'dark' || data.settings?.theme === 'light') state.settings.theme=data.settings.theme;
-      savePrefs(); updateTheme(); await refreshNotes(); scheduleAutoBackup(250); scheduleCloudSync(500); toast('Backup restaurado');
+      if (typeof data.settings?.autoBackupEnabled === 'boolean') state.settings.autoBackupEnabled = data.settings.autoBackupEnabled;
+      savePrefs(); updateTheme(); await updateBackupUI(); await refreshNotes(); scheduleAutoBackup(250); scheduleCloudSync(500); toast('Backup restaurado');
     } catch(e) { console.error(e); toast('Arquivo de backup inválido'); }
   }
 
@@ -2272,16 +2345,20 @@ service cloud.firestore {
   }
   function closeMore() {
     if (!els.moreModal || els.moreModal.hidden) return;
-    els.moreModal.hidden=true; els.moreModal.setAttribute('aria-hidden','true'); document.body.classList.remove('modal-open');
+    els.moreModal.hidden=true; els.moreModal.setAttribute('aria-hidden','true');
+    if (els.syncModal?.hidden) document.body.classList.remove('modal-open');
     const target = modalPreviousFocus?.isConnected ? modalPreviousFocus : els.moreBtn; modalPreviousFocus=null;
     target?.focus?.({preventScroll:true});
   }
   function trapModalFocus(e) {
-    if (e.key !== 'Tab' || els.moreModal.hidden) return;
-    const focusables=[...els.moreModal.querySelectorAll('button:not([disabled])')]; if (!focusables.length) return;
-    const first=focusables[0], last=focusables.at(-1);
-    if (e.shiftKey && document.activeElement===first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement===last) { e.preventDefault(); first.focus(); }
+    if (e.key !== 'Tab') return;
+    const activeModal = !els.syncModal?.hidden ? els.syncModal : (!els.moreModal?.hidden ? els.moreModal : null);
+    if (!activeModal) return;
+    const focusables = [...activeModal.querySelectorAll('button:not([disabled]):not([hidden]), input:not([disabled]):not([hidden]), select:not([disabled]):not([hidden]), summary:not([disabled]), [tabindex]:not([tabindex="-1"]):not([disabled])')].filter(el => el.offsetParent !== null || el.getClientRects().length > 0);
+    if (!focusables.length) return;
+    const first = focusables[0], last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   }
 
   let sidebarHideTimer = null;
@@ -2317,7 +2394,7 @@ service cloud.firestore {
   let edgeGesture = null;
   function bindEdgeGestures() {
     document.addEventListener('pointerdown', e => {
-      if (!isMobile() || e.pointerType === 'mouse' || !els.moreModal.hidden) return;
+      if (!isMobile() || e.pointerType === 'mouse' || !els.moreModal.hidden || !els.syncModal.hidden) return;
       const sidebarOpen = els.sidebar.classList.contains('open');
       if (!sidebarOpen && e.clientX <= 20) edgeGesture = {x:e.clientX, y:e.clientY, mode:'open'};
       else if (sidebarOpen) edgeGesture = {x:e.clientX, y:e.clientY, mode:'close'};
@@ -2334,8 +2411,61 @@ service cloud.firestore {
     document.addEventListener('pointercancel', () => { edgeGesture = null; }, {passive:true});
   }
 
+  function handleEditorKeyDown(e) {
+    if (e.key === 'Enter') {
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount) return;
+      const range = sel.getRangeAt(0);
+      const checkRow = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+        ? range.commonAncestorContainer.closest('.check-row')
+        : range.commonAncestorContainer.parentElement?.closest('.check-row');
+      
+      if (checkRow && els.bodyEditor.contains(checkRow)) {
+        const textSpan = checkRow.querySelector('span') || checkRow;
+        const text = (textSpan.textContent || '').replace(/\u200B/g, '').trim();
+        if (!text) {
+          e.preventDefault();
+          const p = document.createElement('p');
+          p.innerHTML = '<br>';
+          checkRow.replaceWith(p);
+          const newRange = document.createRange();
+          newRange.setStart(p, 0);
+          newRange.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+          saveEditorSelection();
+          queueSave();
+          return;
+        }
+        e.preventDefault();
+        const newRow = document.createElement('div');
+        newRow.className = 'check-row';
+        newRow.innerHTML = '<input type="checkbox" contenteditable="false"><span>\u200B</span>';
+        checkRow.after(newRow);
+        const span = newRow.querySelector('span');
+        const newRange = document.createRange();
+        newRange.selectNodeContents(span);
+        newRange.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+        saveEditorSelection();
+        queueSave();
+        return;
+      }
+    }
+  }
+
   function handlePaste(e) {
     if (!els.bodyEditor.contains(e.target)) return;
+    if (e.clipboardData?.files?.length) {
+      const file = e.clipboardData.files[0];
+      if (file && file.type.startsWith('image/')) {
+        e.preventDefault();
+        saveEditorSelection();
+        insertImage(file);
+        return;
+      }
+    }
     e.preventDefault(); saveEditorSelection();
     const html = e.clipboardData?.getData('text/html');
     const text = e.clipboardData?.getData('text/plain') || '';
@@ -2346,16 +2476,51 @@ service cloud.firestore {
   function bindEvents() {
     els.newNoteBtn.addEventListener('click', createNote); els.quickNewNoteBtn.addEventListener('click', createNote); els.mobileComposeBtn?.addEventListener('click', createNote); els.emptyNewNoteBtn.addEventListener('click', createNote);
     els.menuBtn.addEventListener('click', toggleSidebarMobile); els.sidebarScrim.addEventListener('click', closeSidebarMobile);
-    els.backToListBtn.addEventListener('click',()=>{ els.workspace.classList.remove('editor-open'); document.body.classList.remove('editor-active'); });
+    els.backToListBtn.addEventListener('click', async () => {
+      await flushSave();
+      els.workspace.classList.remove('editor-open');
+      document.body.classList.remove('editor-active');
+      renderNoteList();
+    });
+    els.titleInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        els.bodyEditor.focus();
+      }
+    });
     els.addFolderBtn.addEventListener('click', addFolder);
     document.querySelectorAll('.nav-item').forEach(btn=>btn.addEventListener('click',()=>{
       currentFilter=btn.dataset.filter; currentFolder=null; setActiveNav(currentFilter); renderFolders(); renderNoteList(); closeSidebarMobile();
     }));
-    els.searchInput.addEventListener('input', debounce(renderNoteList, 90)); els.sortSelect.addEventListener('change',renderNoteList);
+    els.searchInput.addEventListener('input', debounce(renderNoteList, 90));
+    els.searchInput.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && els.searchInput.value) {
+        els.searchInput.value = '';
+        renderNoteList();
+      }
+    });
+    els.sortSelect.addEventListener('change',renderNoteList);
     [els.titleInput, els.tagsInput, els.reminderInput].forEach(el=>el.addEventListener('input',queueSave));
     els.reminderInput.addEventListener('change', requestReminderPermission);
     els.bodyEditor.addEventListener('input',queueSave); els.folderSelect.addEventListener('change',queueSave);
+    els.bodyEditor.addEventListener('keydown', handleEditorKeyDown);
     els.bodyEditor.addEventListener('paste', handlePaste);
+    els.bodyEditor.addEventListener('dragover', e => {
+      if (e.dataTransfer?.types?.includes('Files')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    });
+    els.bodyEditor.addEventListener('drop', e => {
+      if (e.dataTransfer?.files?.length) {
+        const file = e.dataTransfer.files[0];
+        if (file && file.type.startsWith('image/')) {
+          e.preventDefault();
+          saveEditorSelection();
+          insertImage(file);
+        }
+      }
+    });
     els.bodyEditor.addEventListener('keyup',saveEditorSelection); els.bodyEditor.addEventListener('mouseup',saveEditorSelection); els.bodyEditor.addEventListener('touchend',()=>setTimeout(saveEditorSelection,0));
     els.bodyEditor.addEventListener('click',e=>{
       if(e.target.matches('input[type="checkbox"]')) { e.target.toggleAttribute('checked', e.target.checked); queueSave(); }
