@@ -1,0 +1,19 @@
+{
+  "name": "Notas+",
+  "short_name": "Notas+",
+  "description": "Bloco de notas pessoal estilo iOS, offline, seguro e com backup.",
+  "start_url": "./NotasPlus_iOS_v7_SafeArea.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F2F2F7",
+  "theme_color": "#F7F7F9",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='128' fill='%23FFD60A'/><rect x='100' y='80' width='312' height='352' rx='48' fill='none' stroke='%23282300' stroke-width='32'/><line x1='160' y1='180' x2='352' y2='180' stroke='%23282300' stroke-width='32' stroke-linecap='round'/><line x1='160' y1='260' x2='352' y2='260' stroke='%23282300' stroke-width='32' stroke-linecap='round'/><line x1='160' y1='340' x2='280' y2='340' stroke='%23282300' stroke-width='32' stroke-linecap='round'/></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
